@@ -405,6 +405,29 @@ def sample_inputs_linalg_matrix_power(op_info, device, dtype, requires_grad):
 
     return inputs
 
+def sample_inputs_linalg_multi_dot(op_info, device, dtype, requires_grad):
+    # Each test case consists of the sizes in the chain of multiplications
+    # e.g. [2, 3, 4, 5] generates matrices (2, 3) @ (3, 4) @ (4, 5)
+    test_cases = [
+        [1, 2, 1],
+        [2, 0, 2],
+        [0, 2, 2],
+        [2, 2, 2, 2],
+        [2, 3, 4, 5],
+        [5, 4, 0, 2],
+        [2, 4, 3, 5, 3, 2]
+    ]
+
+    result = []
+    for sizes in test_cases:
+        tensors = []
+        for size in zip(sizes[:-1], sizes[1:]):
+            t = make_tensor(size, device, dtype, requires_grad=requires_grad)
+            tensors.append(t)
+        result.append(SampleInput(tensors[0], args=tuple(tensors[1:])))
+
+    return result
+
 def sample_inputs_linalg_norm(op_info, device, dtype, requires_grad):
     test_sizes = [
         (S,),
@@ -2814,6 +2837,20 @@ op_db: List[OpInfo] = [
            supports_inplace_autograd=False,
            decorators=[skipCUDAIfNoMagmaAndNoCusolver, skipCPUIfNoLapack, skipCUDAIfRocm],
            sample_inputs_func=sample_inputs_linalg_matrix_power,),
+    OpInfo('linalg.multi_dot',
+           # Need this lambda because gradcheck does not work with TensorList inputs
+           op=lambda *args, **kwargs: torch.linalg.multi_dot(args, **kwargs),
+           aten_name='linalg_multi_dot',
+           dtypes=floating_and_complex_types_and(torch.half),
+           dtypesIfCPU=all_types_and_complex_and(torch.half, torch.bfloat16),
+           dtypesIfCUDA=floating_and_complex_types_and(torch.half, *[torch.bfloat16] if CUDA11OrLater else []),
+           supports_inplace_autograd=False,
+           # Batched grad checks fail for empty input tensors (see https://github.com/pytorch/pytorch/issues/53407)
+           check_batched_grad=False,
+           check_batched_gradgrad=False,
+           sample_inputs_func=sample_inputs_linalg_multi_dot,
+           # test_variant_consistency_jit does not work well with lambda passed in place of op
+           skips=(SkipInfo('TestCommon', 'test_variant_consistency_jit'),)),
     OpInfo('linalg.norm',
            op=torch.linalg.norm,
            dtypes=floating_and_complex_types_and(torch.float16, torch.bfloat16),
